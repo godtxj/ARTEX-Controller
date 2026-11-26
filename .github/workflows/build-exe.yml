@@ -114,107 +114,76 @@ jobs:
                   1,
               )
 
-          old_main_tail = '''    for s in (sys.stdout, sys.stderr):
-                  try:
-                      s.reconfigure(encoding="utf-8", errors="replace")
-                  except Exception:
-                      pass
-
-              global _CONFIG_PATH
-              _CONFIG_PATH = os.path.abspath(args.config)
-              cfg = load_config(args.config)
-              apply_export_dir(cfg)
-              Handler.cfg = cfg
-              port = args.port or int(cfg["console"].get("port", 8900))
-
-              print("ARTEX Controller：%d 台主机（%d 台已配置密码）"
-                    % (len(cfg["machines"]), sum(1 for m in cfg["machines"] if m.get("ssh_password"))))
-              print("页面地址： http://127.0.0.1:%d" % port)
-              print("（每台点右上角开关建立常连接，连上后每 8 秒自动刷新；断开即释放）")
-
-              Handler.port = port
-              Handler.allowed_hosts = {"127.0.0.1:%d" % port, "localhost:%d" % port}
-              srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-              srv.daemon_threads = True
-              srv.request_queue_size = 8
-              if not args.no_browser:
-                  try:
-                      w, h = [int(x) for x in str(args.window_size).lower().split("x")]
-                  except Exception:
-                      w, h = 1040, 780
-                  threading.Timer(1.0, lambda: open_app_window("http://127.0.0.1:%d" % port, w, h)).start()
-              try:
-                  srv.serve_forever()
-              except KeyboardInterrupt:
-                  print("\\n已停止")'''
-          old_main_tail = textwrap.dedent(old_main_tail)
-          new_main_tail = '''    for s in (sys.stdout, sys.stderr):
-                  try:
-                      if s is not None:
-                          s.reconfigure(encoding="utf-8", errors="replace")
-                  except Exception:
-                      pass
-              if sys.stdout is None:
-                  sys.stdout = open(os.devnull, "w", encoding="utf-8")
-              if sys.stderr is None:
-                  sys.stderr = open(os.devnull, "w", encoding="utf-8")
-
-              global _CONFIG_PATH
-              _CONFIG_PATH = os.path.abspath(args.config)
-              if FROZEN and not os.path.isfile(_CONFIG_PATH):
-                  example = os.path.join(RESOURCE_DIR, "config.example.toml")
-                  if os.path.isfile(example):
-                      shutil.copyfile(example, _CONFIG_PATH)
-                      print("已生成配置文件：%s（可直接在界面里填写账号密码）" % _CONFIG_PATH)
-              cfg = load_config(args.config)
-              apply_export_dir(cfg)
-              Handler.cfg = cfg
-              port = args.port or int(cfg["console"].get("port", 8900))
-              try:
-                  w, h = [int(x) for x in str(args.window_size).lower().split("x")]
-              except Exception:
-                  w, h = 1040, 780
-              url = "http://127.0.0.1:%d" % port
-
-              print("ARTEX Controller：%d 台主机（%d 台已配置密码）"
-                    % (len(cfg["machines"]), sum(1 for m in cfg["machines"] if m.get("ssh_password"))))
-              print("页面地址： %s" % url)
-              print("（每台点右上角开关建立常连接，连上后每 8 秒自动刷新；断开即释放）")
-
-              Handler.port = port
-              Handler.allowed_hosts = {"127.0.0.1:%d" % port, "localhost:%d" % port}
-              Handler.last_heartbeat = time.time()
-              try:
-                  srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-              except OSError:
-                  if not args.no_browser:
-                      open_app_window(url, w, h)
-                  return
-              srv.daemon_threads = True
-              srv.request_queue_size = 8
-              if not args.no_browser:
-                  threading.Timer(0.6, lambda: open_app_window(url, w, h)).start()
-
-              if FROZEN and not args.no_browser:
-                  def _watch_ui():
-                      start_ts = time.time()
-                      while True:
-                          time.sleep(2.0)
-                          now = time.time()
-                          if Handler.ever_connected_ui:
-                              if now - Handler.last_heartbeat > 8.0:
-                                  os._exit(0)
-                          elif now - start_ts > 45.0:
-                              os._exit(0)
-                  threading.Thread(target=_watch_ui, daemon=True).start()
-
-              try:
-                  srv.serve_forever()
-              except KeyboardInterrupt:
-                  print("\\n已停止")'''
-          new_main_tail = textwrap.dedent(new_main_tail)
-          assert old_main_tail in src, "old_main_tail not found"
-          src = src.replace(old_main_tail, new_main_tail, 1)
+          idx = src.find('    for s in (sys.stdout, sys.stderr):')
+          end_idx = src.find('\nif __name__ == "__main__":', idx)
+          assert idx != -1 and end_idx != -1, f"main tail slice not found: {idx}, {end_idx}"
+          new_main_tail = (
+              '    for s in (sys.stdout, sys.stderr):\n'
+              '        try:\n'
+              '            if s is not None:\n'
+              '                s.reconfigure(encoding="utf-8", errors="replace")\n'
+              '        except Exception:\n'
+              '            pass\n'
+              '    if sys.stdout is None:\n'
+              '        sys.stdout = open(os.devnull, "w", encoding="utf-8")\n'
+              '    if sys.stderr is None:\n'
+              '        sys.stderr = open(os.devnull, "w", encoding="utf-8")\n'
+              '\n'
+              '    global _CONFIG_PATH\n'
+              '    _CONFIG_PATH = os.path.abspath(args.config)\n'
+              '    if FROZEN and not os.path.isfile(_CONFIG_PATH):\n'
+              '        example = os.path.join(RESOURCE_DIR, "config.example.toml")\n'
+              '        if os.path.isfile(example):\n'
+              '            shutil.copyfile(example, _CONFIG_PATH)\n'
+              '            print("已生成配置文件：%s（可直接在界面里填写账号密码）" % _CONFIG_PATH)\n'
+              '    cfg = load_config(args.config)\n'
+              '    apply_export_dir(cfg)\n'
+              '    Handler.cfg = cfg\n'
+              '    port = args.port or int(cfg["console"].get("port", 8900))\n'
+              '    try:\n'
+              '        w, h = [int(x) for x in str(args.window_size).lower().split("x")]\n'
+              '    except Exception:\n'
+              '        w, h = 1040, 780\n'
+              '    url = "http://127.0.0.1:%d" % port\n'
+              '\n'
+              '    print("ARTEX Controller：%d 台主机（%d 台已配置密码）"\n'
+              '          % (len(cfg["machines"]), sum(1 for m in cfg["machines"] if m.get("ssh_password"))))\n'
+              '    print("页面地址： %s" % url)\n'
+              '    print("（每台点右上角开关建立常连接，连上后每 8 秒自动刷新；断开即释放）")\n'
+              '\n'
+              '    Handler.port = port\n'
+              '    Handler.allowed_hosts = {"127.0.0.1:%d" % port, "localhost:%d" % port}\n'
+              '    Handler.last_heartbeat = time.time()\n'
+              '    try:\n'
+              '        srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)\n'
+              '    except OSError:\n'
+              '        if not args.no_browser:\n'
+              '            open_app_window(url, w, h)\n'
+              '        return\n'
+              '    srv.daemon_threads = True\n'
+              '    srv.request_queue_size = 8\n'
+              '    if not args.no_browser:\n'
+              '        threading.Timer(0.6, lambda: open_app_window(url, w, h)).start()\n'
+              '\n'
+              '    if FROZEN and not args.no_browser:\n'
+              '        def _watch_ui():\n'
+              '            start_ts = time.time()\n'
+              '            while True:\n'
+              '                time.sleep(2.0)\n'
+              '                now = time.time()\n'
+              '                if Handler.ever_connected_ui:\n'
+              '                    if now - Handler.last_heartbeat > 8.0:\n'
+              '                        os._exit(0)\n'
+              '                elif now - start_ts > 45.0:\n'
+              '                    os._exit(0)\n'
+              '        threading.Thread(target=_watch_ui, daemon=True).start()\n'
+              '\n'
+              '    try:\n'
+              '        srv.serve_forever()\n'
+              '    except KeyboardInterrupt:\n'
+              '        print("\\n已停止")\n'
+          )
+          src = src[:idx] + new_main_tail + src[end_idx:]
           assert "/api/heartbeat" in src and "_watch_ui" in src
           py_path.write_text(src, encoding="utf-8")
 
