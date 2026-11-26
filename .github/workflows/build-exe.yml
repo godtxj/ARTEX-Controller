@@ -21,7 +21,7 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      - name: Prepare PyInstaller spec and frozen support
+      - name: Prepare PyInstaller spec and windowless frozen support
         shell: python
         run: |
           import pathlib, textwrap
@@ -43,18 +43,180 @@ jobs:
                   'with open(os.path.join(RESOURCE_DIR, "icon.ico"), "rb") as f:',
                   1,
               )
+
+          if "/api/heartbeat" not in src:
               src = src.replace(
-                  '    _CONFIG_PATH = os.path.abspath(args.config)\n    cfg = load_config(args.config)',
-                  '    _CONFIG_PATH = os.path.abspath(args.config)\n'
-                  '    if FROZEN and not os.path.isfile(_CONFIG_PATH):\n'
-                  '        example = os.path.join(RESOURCE_DIR, "config.example.toml")\n'
-                  '        if os.path.isfile(example):\n'
-                  '            shutil.copyfile(example, _CONFIG_PATH)\n'
-                  '            print("已生成配置文件：%s（可直接在界面里填写账号密码）" % _CONFIG_PATH)\n'
-                  '    cfg = load_config(args.config)',
+                  'async function boot(){',
+                  'function boot(){\n'
+                  '  if (!window._hbStarted){\n'
+                  '    window._hbStarted = true;\n'
+                  '    const hb = () => fetch("/api/heartbeat", {keepalive: true}).catch(() => {});\n'
+                  '    hb();\n'
+                  '    setInterval(hb, 2500);\n'
+                  '  }\n'
+                  '  return _boot();\n'
+                  '}\n'
+                  'async function _boot(){',
                   1,
               )
-              py_path.write_text(src, encoding="utf-8")
+              src = src.replace(
+                  "async function load(){try{fill(await api('/api/settings'))}catch(e){$('msg').textContent=T('req_fail')+e}}",
+                  "async function load(){\n"
+                  "  if (!window._hbStarted){\n"
+                  "    window._hbStarted = true;\n"
+                  "    const hb = () => fetch('/api/heartbeat', {keepalive: true}).catch(() => {});\n"
+                  "    hb();\n"
+                  "    setInterval(hb, 2500);\n"
+                  "  }\n"
+                  "  try{fill(await api('/api/settings'))}catch(e){$('msg').textContent=T('req_fail')+e}\n"
+                  "}",
+                  1,
+              )
+              src = src.replace(
+                  'class Handler(BaseHTTPRequestHandler):\n'
+                  '    cfg = None\n'
+                  '    port = 0\n'
+                  '    allowed_hosts = set()',
+                  'class Handler(BaseHTTPRequestHandler):\n'
+                  '    cfg = None\n'
+                  '    port = 0\n'
+                  '    allowed_hosts = set()\n'
+                  '    last_heartbeat = 0.0\n'
+                  '    ever_connected_ui = False',
+                  1,
+              )
+              src = src.replace(
+                  '    def do_GET(self):\n'
+                  '        if not self._guard():\n'
+                  '            return\n'
+                  '        if self.path.startswith("/api/machines"):',
+                  '    def do_GET(self):\n'
+                  '        if not self._guard():\n'
+                  '            return\n'
+                  '        Handler.last_heartbeat = time.time()\n'
+                  '        if self.path.startswith("/api/heartbeat"):\n'
+                  '            Handler.ever_connected_ui = True\n'
+                  '            self._json({"ok": True})\n'
+                  '            return\n'
+                  '        if self.path.startswith("/api/machines"):',
+                  1,
+              )
+              src = src.replace(
+                  '    def do_POST(self):\n'
+                  '        if not self._guard():\n'
+                  '            return\n'
+                  '        try:',
+                  '    def do_POST(self):\n'
+                  '        if not self._guard():\n'
+                  '            return\n'
+                  '        Handler.last_heartbeat = time.time()\n'
+                  '        try:',
+                  1,
+              )
+
+          old_main_tail = '''    for s in (sys.stdout, sys.stderr):
+                  try:
+                      s.reconfigure(encoding="utf-8", errors="replace")
+                  except Exception:
+                      pass
+
+              global _CONFIG_PATH
+              _CONFIG_PATH = os.path.abspath(args.config)
+              cfg = load_config(args.config)
+              apply_export_dir(cfg)
+              Handler.cfg = cfg
+              port = args.port or int(cfg["console"].get("port", 8900))
+
+              print("ARTEX Controller：%d 台主机（%d 台已配置密码）"
+                    % (len(cfg["machines"]), sum(1 for m in cfg["machines"] if m.get("ssh_password"))))
+              print("页面地址： http://127.0.0.1:%d" % port)
+              print("（每台点右上角开关建立常连接，连上后每 8 秒自动刷新；断开即释放）")
+
+              Handler.port = port
+              Handler.allowed_hosts = {"127.0.0.1:%d" % port, "localhost:%d" % port}
+              srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+              srv.daemon_threads = True
+              srv.request_queue_size = 8
+              if not args.no_browser:
+                  try:
+                      w, h = [int(x) for x in str(args.window_size).lower().split("x")]
+                  except Exception:
+                      w, h = 1040, 780
+                  threading.Timer(1.0, lambda: open_app_window("http://127.0.0.1:%d" % port, w, h)).start()
+              try:
+                  srv.serve_forever()
+              except KeyboardInterrupt:
+                  print("\\n已停止")'''
+          old_main_tail = textwrap.dedent(old_main_tail)
+          new_main_tail = '''    for s in (sys.stdout, sys.stderr):
+                  try:
+                      if s is not None:
+                          s.reconfigure(encoding="utf-8", errors="replace")
+                  except Exception:
+                      pass
+              if sys.stdout is None:
+                  sys.stdout = open(os.devnull, "w", encoding="utf-8")
+              if sys.stderr is None:
+                  sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+              global _CONFIG_PATH
+              _CONFIG_PATH = os.path.abspath(args.config)
+              if FROZEN and not os.path.isfile(_CONFIG_PATH):
+                  example = os.path.join(RESOURCE_DIR, "config.example.toml")
+                  if os.path.isfile(example):
+                      shutil.copyfile(example, _CONFIG_PATH)
+                      print("已生成配置文件：%s（可直接在界面里填写账号密码）" % _CONFIG_PATH)
+              cfg = load_config(args.config)
+              apply_export_dir(cfg)
+              Handler.cfg = cfg
+              port = args.port or int(cfg["console"].get("port", 8900))
+              try:
+                  w, h = [int(x) for x in str(args.window_size).lower().split("x")]
+              except Exception:
+                  w, h = 1040, 780
+              url = "http://127.0.0.1:%d" % port
+
+              print("ARTEX Controller：%d 台主机（%d 台已配置密码）"
+                    % (len(cfg["machines"]), sum(1 for m in cfg["machines"] if m.get("ssh_password"))))
+              print("页面地址： %s" % url)
+              print("（每台点右上角开关建立常连接，连上后每 8 秒自动刷新；断开即释放）")
+
+              Handler.port = port
+              Handler.allowed_hosts = {"127.0.0.1:%d" % port, "localhost:%d" % port}
+              Handler.last_heartbeat = time.time()
+              try:
+                  srv = ThreadingHTTPServer(("127.0.0.1", port), Handler)
+              except OSError:
+                  if not args.no_browser:
+                      open_app_window(url, w, h)
+                  return
+              srv.daemon_threads = True
+              srv.request_queue_size = 8
+              if not args.no_browser:
+                  threading.Timer(0.6, lambda: open_app_window(url, w, h)).start()
+
+              if FROZEN and not args.no_browser:
+                  def _watch_ui():
+                      start_ts = time.time()
+                      while True:
+                          time.sleep(2.0)
+                          now = time.time()
+                          if Handler.ever_connected_ui:
+                              if now - Handler.last_heartbeat > 8.0:
+                                  os._exit(0)
+                          elif now - start_ts > 45.0:
+                              os._exit(0)
+                  threading.Thread(target=_watch_ui, daemon=True).start()
+
+              try:
+                  srv.serve_forever()
+              except KeyboardInterrupt:
+                  print("\\n已停止")'''
+          new_main_tail = textwrap.dedent(new_main_tail)
+          assert old_main_tail in src, "old_main_tail not found"
+          src = src.replace(old_main_tail, new_main_tail, 1)
+          assert "/api/heartbeat" in src and "_watch_ui" in src
+          py_path.write_text(src, encoding="utf-8")
 
           spec = '''# -*- mode: python ; coding: utf-8 -*-
           import sys
@@ -88,7 +250,7 @@ jobs:
               bootloader_ignore_signals=False,
               strip=False,
               upx=False,
-              console=True,
+              console=False,
               disable_windowed_traceback=False,
               argv_emulation=False,
               target_arch=None,
