@@ -16,7 +16,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up MSVC
-        uses: ilammy/setup-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@v1
 
       - name: Write Native C++ Source
         shell: python
