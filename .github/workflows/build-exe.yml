@@ -15,9 +15,6 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up MSVC
-        uses: ilammy/setup-dev-cmd@v1
-
       - name: Write Native C++ Source
         shell: python
         run: |
@@ -28,19 +25,17 @@ jobs:
           pathlib.Path("native/app.rc").write_text("1 ICON \"../icon.ico\"\n", encoding="utf-8")
 
       - name: Download WebView2 SDK & Compile Native C++ EXE
-        shell: pwsh
+        shell: cmd
         run: |
-          New-Item -ItemType Directory -Force -Path build_native, dist | Out-Null
-          curl.exe -sSL "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.2792.45" -o build_native/webview2.zip
-          Expand-Archive -Path build_native/webview2.zip -DestinationPath build_native/wv2 -Force
+          mkdir build_native 2>nul
+          mkdir dist 2>nul
+          curl.exe -sSL "https://www.nuget.org/api/v2/package/Microsoft.Web.WebView2/1.0.2792.45" -o build_native\webview2.zip
+          tar -xf build_native\webview2.zip -C build_native
 
-          rc.exe /nologo /fo build_native/app.res native/app.rc
-          cl.exe /nologo /utf-8 /EHsc /O2 /MT `
-            /I "build_native/wv2/build/native/include" `
-            native/main.cpp build_native/app.res `
-            "build_native/wv2/build/native/x64/WebView2LoaderStatic.lib" `
-            user32.lib gdi32.lib shell32.lib shlwapi.lib ole32.lib advapi32.lib `
-            /link /SUBSYSTEM:WINDOWS /OUT:dist/ARTEX-Controller.exe
+          for /f "usebackq tokens=*" %%i in (`"%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe" -latest -property installationPath`) do call "%%i\VC\Auxiliary\Build\vcvars64.bat"
+
+          rc.exe /nologo /fo build_native\app.res native\app.rc
+          cl.exe /nologo /utf-8 /EHsc /O2 /MT /I "build_native\build\native\include" native\main.cpp build_native\app.res "build_native\build\native\x64\WebView2LoaderStatic.lib" user32.lib gdi32.lib shell32.lib shlwapi.lib ole32.lib advapi32.lib /link /SUBSYSTEM:WINDOWS /OUT:dist\ARTEX-Controller.exe
 
       - name: Upload EXE Artifact
         uses: actions/upload-artifact@v4
